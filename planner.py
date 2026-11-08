@@ -6,7 +6,7 @@ POINT_PLANNER=0; TRAJECTORY_PLANNER=1
 
 
 class planner:
-    def __init__(self, type_, shape="parabola"):
+    def __init__(self, type_, shape="sigmoid"):
 
         self.type=type_
         self.shape=shape
