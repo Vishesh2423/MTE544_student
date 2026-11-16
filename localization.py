@@ -25,7 +25,9 @@ odom_qos=QoSProfile(reliability=2, durability=2, history=1, depth=10)
 
 class localization(Node):
     
-    def __init__(self, type, dt, loggerName="robotPose.csv", loggerHeaders=["imu_ax", "imu_ay", "kf_ax", "kf_ay","kf_vx","kf_w","kf_x", "kf_y","stamp"]):
+    def __init__(self, type, dt, Q=0.5, R=0.5, loggerName="robotPose.csv",
+                 loggerHeaders=["imu_ax", "imu_ay", "kf_ax", "kf_ay", "kf_vx", "kf_w", "kf_x", "kf_y",
+                                "odom_v", "odom_w", "odom_x", "odom_y", "stamp"]):
 
         super().__init__("localizer")
 
@@ -35,7 +37,7 @@ class localization(Node):
         if type==rawSensors:
             self.initRawSensors()
         elif type==kalmanFilter:
-            self.initKalmanfilter(dt)
+            self.initKalmanfilter(dt, Q, R)
         else:
             print("We don't have this type for localization", sys.stderr)
             return  
@@ -43,23 +45,23 @@ class localization(Node):
     def initRawSensors(self):
         self.create_subscription(odom, "/odom", self.odom_callback, qos_profile=odom_qos)
         
-    def initKalmanfilter(self, dt):
+    def initKalmanfilter(self, dt, Q_val=0.5, R_val=0.5):
         
         # TODO Part 3: Set up the quantities for the EKF (hint: you will need the functions for the states and measurements)
         
         x= np.array([0, 0, 0, 0, 0, 0])
         
-        Q= 0.5 * np.eye(6)
+        Q= Q_val * np.eye(6)   # state (process) covariance, set from command line
 
-        R= 0.5 * np.eye(4)
+        R= R_val * np.eye(4)   # measurement covariance, set from command line
         
         P= np.eye(6) # initial covariance
         
         self.kf=kalman_filter(P,Q,R, x, dt)
         
         # TODO Part 3: Use the odometry and IMU data for the EKF
-        self.odom_sub=message_filters.Subscriber(self, odom, "/odom")
-        self.imu_sub=message_filters.Subscriber(self, Imu, "/imu")
+        self.odom_sub=message_filters.Subscriber(self, odom, "/odom", qos_profile=odom_qos)
+        self.imu_sub=message_filters.Subscriber(self, Imu, "/imu", qos_profile=odom_qos)
         
         time_syncher=message_filters.ApproximateTimeSynchronizer([self.odom_sub, self.imu_sub], queue_size=10, slop=0.1)
         time_syncher.registerCallback(self.fusion_callback)
@@ -86,7 +88,9 @@ class localization(Node):
         xhat=self.kf.get_states()
 
         # Update the pose estimate to be returned by getPose
-        self.pose = np.array([xhat[0], xhat[1], xhat[2], odom_msg.header.stamp])
+        # wrap theta to [-pi, pi] so the angular error stays valid after full turns
+        th = np.arctan2(np.sin(xhat[2]), np.cos(xhat[2]))
+        self.pose = np.array([xhat[0], xhat[1], th, odom_msg.header.stamp])
 
         # TODO Part 4: log your data
         self.loc_logger.log_values([
@@ -98,6 +102,10 @@ class localization(Node):
             xhat[3],              # kf_w  = w
             xhat[0],              # kf_x
             xhat[1],              # kf_y
+            z[0],                 # odom_v  (raw measurement)
+            z[1],                 # odom_w  (raw measurement)
+            odom_msg.pose.pose.position.x,   # odom_x (wheel-odometry position, for comparison)
+            odom_msg.pose.pose.position.y,   # odom_y
             Time.from_msg(odom_msg.header.stamp).nanoseconds,
         ])
       

@@ -20,7 +20,8 @@ from controller import controller, trajectoryController
 class decision_maker(Node):
     
     
-    def __init__(self, publisher_msg, publishing_topic, qos_publisher, rate=10, motion_type=POINT_PLANNER):
+    def __init__(self, publisher_msg, publishing_topic, qos_publisher, rate=10, motion_type=POINT_PLANNER,
+                 Q=0.5, R=0.5, logName="robotPose.csv"):
 
         super().__init__("decision_maker")
 
@@ -33,7 +34,7 @@ class decision_maker(Node):
 
 
         # TODO Part 3: use the Kalman Filter
-        self.localizer = localization(type=kalmanFilter, dt=publishing_period)
+        self.localizer = localization(type=kalmanFilter, dt=publishing_period, Q=Q, R=R, loggerName=logName)
         
         if motion_type==POINT_PLANNER:
             self.controller=controller(klp=0.2, klv=0.5, kap=0.8, kav=0.6)      
@@ -72,7 +73,7 @@ class decision_maker(Node):
         vel_msg=Twist()
 
         if self.motion_type == SPIRAL_4TUNE:
-            self.linearVelocity += 0.01 if self.linearVelocity < 1.0 else 0.0
+            self.linearVelocity += 0.005 if self.linearVelocity < 1.0 else 0.0
             vel_msg.linear.x=self.linearVelocity
             vel_msg.angular.z=1.0
             self.publisher.publish(vel_msg)
@@ -111,12 +112,16 @@ def main(args=None):
     init()
     
     
+    # one CSV per run so the Q/R variations don't overwrite each other
+    logName = args.log or f"{args.motion}_Q{args.Q}_R{args.R}.csv"
+    kw = dict(Q=args.Q, R=args.R, logName=logName)
+
     if args.motion == "point":
-        DM=decision_maker(Twist, "/cmd_vel", 10, motion_type=POINT_PLANNER)
+        DM=decision_maker(Twist, "/cmd_vel", 10, motion_type=POINT_PLANNER, **kw)
     elif args.motion == "trajectory":
-        DM=decision_maker(Twist, "/cmd_vel", 10, motion_type=TRAJECTORY_PLANNER)
+        DM=decision_maker(Twist, "/cmd_vel", 10, motion_type=TRAJECTORY_PLANNER, **kw)
     elif args.motion == "spiral":
-        DM=decision_maker(Twist, "/cmd_vel", 10, motion_type=SPIRAL_4TUNE)
+        DM=decision_maker(Twist, "/cmd_vel", 10, motion_type=SPIRAL_4TUNE, **kw)
     else:
         print("invalid motion type", file=sys.stderr)
         return
@@ -135,6 +140,9 @@ if __name__=="__main__":
     
     argParser=argparse.ArgumentParser(description="point or trajectory") 
     argParser.add_argument("--motion", type=str, default="spiral")
+    argParser.add_argument("--Q", type=float, default=0.5, help="process covariance scale")
+    argParser.add_argument("--R", type=float, default=0.5, help="measurement covariance scale")
+    argParser.add_argument("--log", type=str, default=None, help="CSV name (default: <motion>_Q<Q>_R<R>.csv)")
     args = argParser.parse_args()
 
     main(args)
