@@ -25,12 +25,17 @@ odom_qos=QoSProfile(reliability=2, durability=2, history=1, depth=10)
 
 class localization(Node):
     
+    # Q, R  : scalar scales for the process / measurement covariances (Q*I, R*I), passed
+    #         from decisions.py so they can be tuned from the command line.
+    # loggerHeaders: odom_v, odom_w, odom_x and odom_y were added to the provided headers
+    #         so the EKF estimates can be plotted against the raw odometry measurements.
     def __init__(self, type, dt, Q=0.5, R=0.5, loggerName="robotPose.csv",
                  loggerHeaders=["imu_ax", "imu_ay", "kf_ax", "kf_ay", "kf_vx", "kf_w", "kf_x", "kf_y",
                                 "odom_v", "odom_w", "odom_x", "odom_y", "stamp"]):
 
         super().__init__("localizer")
 
+        # CSV logger for the estimates and measurements (fixed the "elf" typo from the starter code)
         self.loc_logger=Logger( loggerName , loggerHeaders)
         self.pose=None
         
@@ -49,20 +54,31 @@ class localization(Node):
         
         # TODO Part 3: Set up the quantities for the EKF (hint: you will need the functions for the states and measurements)
         
+        # Initial state [x, y, th, w, v, vdot]: the robot starts at rest at the origin
+        # (odometry is reset to (0, 0, 0) before each run)
         x= np.array([0, 0, 0, 0, 0, 0])
-        
+
+        # Process noise covariance (6x6, one entry per state). A larger Q means less trust
+        # in the motion model, so the filter follows the measurements more closely.
         Q= Q_val * np.eye(6)   # state (process) covariance, set from command line
 
+        # Measurement noise covariance (4x4, one entry per measurement [v, w, ax, ay]).
+        # A larger R means less trust in the sensors, so the output is smoother but lags more.
         R= R_val * np.eye(4)   # measurement covariance, set from command line
-        
+
+        # Initial estimate covariance: moderate uncertainty about the initial state
         P= np.eye(6) # initial covariance
-        
+
+        # dt is the decision_maker timer period, so one EKF step per control step
         self.kf=kalman_filter(P,Q,R, x, dt)
-        
+
         # TODO Part 3: Use the odometry and IMU data for the EKF
+        # message_filters subscribers on wheel odometry (v, w) and the IMU (ax, ay); they
+        # are paired by the time synchronizer below instead of using separate callbacks
         self.odom_sub=message_filters.Subscriber(self, odom, "/odom", qos_profile=odom_qos)
         self.imu_sub=message_filters.Subscriber(self, Imu, "/imu", qos_profile=odom_qos)
-        
+
+        # Calls fusion_callback with an odom/IMU pair whose timestamps are within 0.1 s
         time_syncher=message_filters.ApproximateTimeSynchronizer([self.odom_sub, self.imu_sub], queue_size=10, slop=0.1)
         time_syncher.registerCallback(self.fusion_callback)
     
@@ -81,18 +97,22 @@ class localization(Node):
         ])
         
         # Implement the two steps for estimation
-        self.kf.predict()
-        self.kf.update(z)
-        
-        # Get the estimate
+        self.kf.predict()   # propagate the state with the motion model: x = f(x), P = APA' + Q
+        self.kf.update(z)   # correct the prediction with the measurements through the Kalman gain
+
+        # Get the estimate: xhat = [x, y, th, w, v, vdot]
         xhat=self.kf.get_states()
 
         # Update the pose estimate to be returned by getPose
         # wrap theta to [-pi, pi] so the angular error stays valid after full turns
+        # (the EKF integrates th without bounds; the controller expects an angle like euler_from_quaternion returns)
         th = np.arctan2(np.sin(xhat[2]), np.cos(xhat[2]))
+        # Same [x, y, th, stamp] format as odom_callback, so the controllers work unchanged
         self.pose = np.array([xhat[0], xhat[1], th, odom_msg.header.stamp])
 
         # TODO Part 4: log your data
+        # One row per EKF step, in the same order as loggerHeaders: raw measurements next to
+        # the corresponding EKF estimates for the measured-vs-estimated plots in the report
         self.loc_logger.log_values([
             z[2],                 # imu_ax  (raw)
             z[3],                 # imu_ay  (raw)
@@ -106,7 +126,7 @@ class localization(Node):
             z[1],                 # odom_w  (raw measurement)
             odom_msg.pose.pose.position.x,   # odom_x (wheel-odometry position, for comparison)
             odom_msg.pose.pose.position.y,   # odom_y
-            Time.from_msg(odom_msg.header.stamp).nanoseconds,
+            Time.from_msg(odom_msg.header.stamp).nanoseconds,   # stamp [ns]
         ])
       
     def odom_callback(self, pose_msg):
