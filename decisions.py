@@ -29,7 +29,7 @@ from geometry_msgs.msg import PoseStamped
 class decision_maker(Node):
     
     
-    def __init__(self, publisher_msg, publishing_topic, qos_publisher, rate=10, motion_type=POINT_PLANNER):
+    def __init__(self, publisher_msg, publishing_topic, qos_publisher, rate=10, motion_type=POINT_PLANNER, heuristic="euclidean"):
 
         super().__init__("decision_maker")
 
@@ -43,13 +43,11 @@ class decision_maker(Node):
         publishing_period=1/rate
 
         # TODO PART 5 choose your threshold
-        self.reachThreshold=...
+        self.reachThreshold=0.1 # 10cm threshold
 
         # TODO PART 5 your localization type
-        self.localizer=localization(...)
+        self.localizer=localization(kalmanFilter)
 
-
-        
         if motion_type==POINT_PLANNER:
             self.controller=controller(klp=0.2, klv=0.5, kap=0.8, kav=0.6)      
             self.planner=planner(POINT_PLANNER)
@@ -57,8 +55,9 @@ class decision_maker(Node):
         
         elif motion_type==TRAJECTORY_PLANNER:
             # TODO PART 5 Put the gains that you concluded from lab 2
-            self.controller=trajectoryController(...)      
-            self.planner=planner(TRAJECTORY_PLANNER)
+            self.controller=trajectoryController(klp=0.2, klv=0.5, kap=0.8, kav=0.6, kli=0, kai=0)      
+            # heuristic picks Euclidean or Manhattan distance for A*
+            self.planner=planner(TRAJECTORY_PLANNER, heuristic=heuristic)
         
         else:
             print("Error! you don't have this type of planner", file=sys.stderr)
@@ -170,7 +169,7 @@ def main(args=None):
     if args.motion == "point":
         DM=decision_maker(Twist, "/cmd_vel", 10, motion_type=POINT_PLANNER)
     elif args.motion == "trajectory":
-        DM=decision_maker(Twist, "/cmd_vel", 10, motion_type=TRAJECTORY_PLANNER)
+        DM=decision_maker(Twist, "/cmd_vel", 10, motion_type=TRAJECTORY_PLANNER, heuristic=args.heuristic)
     else:
         print("invalid motion type", file=sys.stderr)
 
@@ -187,6 +186,9 @@ def main(args=None):
 if __name__=="__main__":
     argParser=argparse.ArgumentParser(description="point or trajectory") 
     argParser.add_argument("--motion", type=str, default="trajectory")
+    # A* heuristic for the trajectory planner
+    argParser.add_argument("--heuristic", type=str, default="euclidean",
+                           choices=["euclidean", "manhattan"])
     args = argParser.parse_args()
 
     main(args)
